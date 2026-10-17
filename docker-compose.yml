@@ -1,0 +1,11 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: trail
+      POSTGRES_PASSWORD: trail
+      POSTGRES_DB: trail
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+volumes:
+  pgdata:

@@ -1,0 +1,12 @@
+{
+  "name": "asset-trail-verifier",
+  "version": "0.1.0",
+  "description": "Verify an Asset Trail proof pack against any Stellar RPC node, without trusting the platform.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": { "asset-trail-verify": "./verify.mjs" },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^17.2.1",
+    "canonicalize": "^5.1.0"
+  }
+}
