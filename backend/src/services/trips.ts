@@ -236,13 +236,14 @@ const money = (n: number | bigint) => fromStroops(BigInt(n));
 /** Full trip view used by the portal and the driver app. */
 export async function tripView(ctx: Ctx, tripId: string) {
   const trip = await getTripRow(ctx, tripId);
-  const [waypoints, events, advances, live, asset, driver] = await Promise.all([
+  const [waypoints, events, advances, live, asset, driver, receiver] = await Promise.all([
     getWaypoints(ctx, tripId),
     ctx.db.select().from(schema.custodyEvents).where(eq(schema.custodyEvents.tripId, tripId)).orderBy(asc(schema.custodyEvents.id)),
     ctx.db.select().from(schema.advances).where(eq(schema.advances.tripId, tripId)).orderBy(desc(schema.advances.id)),
     ctx.db.query.livePositions.findFirst({ where: eq(schema.livePositions.tripId, tripId) }),
     ctx.db.query.assets.findFirst({ where: eq(schema.assets.id, trip.assetId) }),
     ctx.db.query.drivers.findFirst({ where: eq(schema.drivers.id, trip.driverId) }),
+    ctx.db.query.receivers.findFirst({ where: eq(schema.receivers.id, trip.receiverId) }),
   ]);
   const last = waypoints.length - 1;
   const checkinKinds: number[] = [Kind.PICKUP, Kind.CHECKIN, Kind.ARRIVAL, Kind.FORCED_CHECKIN, Kind.DELIVERY];
@@ -251,8 +252,9 @@ export async function tripView(ctx: Ctx, tripId: string) {
   return {
     id: trip.id,
     status: trip.status,
-    asset: asset && { id: asset.id, name: asset.name, serial: asset.serial },
+    asset: asset && { id: asset.id, name: asset.name, type: asset.type, serial: asset.serial },
     driver: driver && { id: driver.id, name: driver.name, address: driver.publicKey },
+    receiver: receiver && { name: receiver.name },
     vehicle: trip.vehicle,
     escrow: {
       funded: money(trip.escrow),

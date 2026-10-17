@@ -481,6 +481,22 @@ describe('delivery deadline and final pay over HTTP (PGlite, stubbed ledger)', (
     expect(scValToNative(create.args.at(-1)!)).toBe(BigInt(deadline.getTime() / 1000));
   });
 
+  it('driver views: the wallet lists only pay to the driver; trips name the asset type and receiver', async () => {
+    // The dispatch event carries the escrow the funder put in. It is not the driver's pay.
+    const dispatch = await ctx.db.query.custodyEvents.findFirst({ where: eq(schema.custodyEvents.kind, Kind.DISPATCH) });
+    expect([dispatch?.status, (dispatch?.amount ?? 0) > 0]).toEqual(['confirmed', true]);
+    const wallet = await call('GET', '/v1/driver/wallet', undefined, driver);
+    expect(wallet.status, JSON.stringify(wallet.body)).toBe(200);
+    expect(wallet.body.activity).toEqual([]);
+    expect(wallet.body.cashouts).toEqual([]);
+
+    const t = await call('GET', `/v1/driver/trips/${tripId}`, undefined, driver);
+    expect(t.body.asset.type).toBe('generator');
+    expect(t.body.receiver).toEqual({ name: 'Warehouse B' });
+    const network = await call('GET', '/v1/network');
+    expect([network.body.ledgerSeconds, network.body.maxOfflineHours]).toEqual([5, 12]);
+  });
+
   it('GET /driver/trips/:id shows the finalPay block only while awaiting the signature', async () => {
     const before = await call('GET', `/v1/driver/trips/${tripId}`, undefined, driver);
     expect(before.body.finalPay).toBeNull();

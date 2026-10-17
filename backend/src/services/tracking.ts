@@ -56,8 +56,10 @@ export async function trackingView(ctx: Ctx, token: string) {
 
 export async function sendSignOtp(ctx: Ctx, token: string) {
   const { trip, receiver } = await byToken(ctx, token);
-  await sendOtp(ctx, receiver.phone, `receiver:${trip.id}`, (code) => `Your code to sign for ${trip.id}: ${code}`);
-  return { sent: true, to: receiver.phone.replace(/.(?=.{3})/g, '•') };
+  const code = await sendOtp(ctx, receiver.phone, `receiver:${trip.id}`, (c) => `Your code to sign for ${trip.id}: ${c}`);
+  const sent = { sent: true, to: receiver.phone.replace(/.(?=.{3})/g, '•') };
+  // Demo set-ups without an SMS provider (SHOW_OTP_IN_RESPONSE) get the code back.
+  return ctx.config.SHOW_OTP_IN_RESPONSE ? { ...sent, devCode: code } : sent;
 }
 
 /**

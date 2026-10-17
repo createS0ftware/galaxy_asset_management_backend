@@ -9,6 +9,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { Address, Asset, Keypair, Networks, Operation, rpc, scValToNative } from '@stellar/stellar-sdk';
 import { createSponsoredAccount } from '../src/stellar/accounts.js';
 import { addr } from '../src/stellar/scval.js';
@@ -16,7 +17,8 @@ import { Submitter } from '../src/stellar/submitter.js';
 
 const RPC = process.env.STELLAR_RPC_URL ?? 'https://soroban-testnet.stellar.org';
 const PASSPHRASE = Networks.TESTNET;
-const wasmPath = process.argv[2] ?? new URL('../../artifacts/asset_trail.wasm', import.meta.url).pathname;
+// fileURLToPath, not URL.pathname: on Windows the pathname is "/C:/…", which fs can't open.
+const wasmPath = process.argv[2] ?? fileURLToPath(new URL('../../artifacts/asset_trail.wasm', import.meta.url));
 
 const server = new rpc.Server(RPC);
 const log = (...a: unknown[]) => console.log('•', ...a);
@@ -85,6 +87,6 @@ MOCK_ANCHOR_SECRET=${anchor.secret()}
 RECEIVER_KEY_ENCRYPTION_KEY=${randomBytes(32).toString('base64')}
 JWT_SECRET=${randomBytes(32).toString('base64url')}
 `;
-const out = new URL('../.env.testnet', import.meta.url).pathname;
+const out = fileURLToPath(new URL('../.env.testnet', import.meta.url));
 writeFileSync(out, env, { mode: 0o600 });
 log(`wrote ${out}`);
