@@ -1,0 +1,24 @@
+# Builds the asset-trail contract in a clean, attested environment on every v* tag and
+# publishes the Wasm as a GitHub release. Deploy that exact Wasm so explorers (Stellar Expert)
+# can match the on-chain hash to this source.
+name: Release contract
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  id-token: write
+  contents: write
+  attestations: write
+
+jobs:
+  release-asset-trail:
+    uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@v28.1.0
+    with:
+      release_name: ${{ github.ref_name }}
+      release_description: 'asset-trail Soroban contract (escrow + custody trail)'
+      package: 'asset-trail'
+    secrets:
+      release_token: ${{ secrets.GITHUB_TOKEN }}
