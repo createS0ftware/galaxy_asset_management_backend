@@ -37,6 +37,9 @@ export async function quoteCashout(ctx: Ctx, driverId: number, amount: bigint) {
     arrival: q.arrival,
     validUntil: q.expiresAt,
     networkFee: 'paid by the platform',
+    /** Anchor withdraw instructions, so the phone can check the payment it is later asked to sign. */
+    payTo: account,
+    memo,
   };
 }
 

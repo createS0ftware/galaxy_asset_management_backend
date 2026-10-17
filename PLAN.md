@@ -35,7 +35,7 @@ how we turn it into a Soroban contract + backend, and which open decisions we to
 State
 * `Config { admin, platform, token }` (instance)
 * `Asset { id, owner_ref, reg_hash, tag_hash, active, head, events, current_trip }` (persistent)
-* `Trip { id, asset, driver, receiver, funder, legs: Vec<i128>, advance_limit, plan_hash,
+* `Trip { id, asset, driver, receiver, funder, legs: Vec<i128>, advance_limit, plan_hash, deadline,
   next_wp, paid, advanced, pending_advance, status, records: Vec<Record> }` (persistent)
 
 Functions (auth in brackets)
@@ -44,11 +44,12 @@ Functions (auth in brackets)
 | `__constructor(admin, platform, token)` | — | deploy |
 | `register_asset(id, reg_hash)` | admin | T1 |
 | `activate_asset(id, tag_hash)` | admin + platform | BR-01 |
-| `create_trip(id, asset, driver, receiver, funder, legs, advance_limit, plan_hash)` | admin + funder | T3, BR-02 (escrow pulled = Σlegs + advance_limit) |
+| `create_trip(id, asset, driver, receiver, funder, legs, advance_limit, plan_hash, deadline)` | admin + funder | T3, BR-02 (escrow pulled = Σlegs + advance_limit). `deadline` (unix s, must be in the future, else `InvalidDeadline`) is when an unsigned final leg becomes claimable |
 | `check_in(trip, wp, payload_hash)` | driver + platform | T4/T5, BR-03 (next wp), BR-04. At the delivery waypoint it records **arrival** (no pay) → `AwaitingSignature` |
 | `confirm_delivery(trip, receipt_hash)` | receiver + platform | T8, BR-05: final leg minus advances |
+| `claim_final_pay(trip, claim_hash)` | driver only | §4.6: still `AwaitingSignature` after `deadline` (else `WrongStatus` / `DeadlineNotPassed`) → final leg minus advances, custody kind `RELEASE` (15), `Delivered` |
 | `grant_advance(trip, amount, expires_at)` / `claim_advance(trip)` | admin / driver | T6/T7, BR-06 |
-| `report_problem(trip, evidence_hash)` | receiver or platform | dispute hold |
+| `report_problem(trip, evidence_hash)` | receiver or platform | dispute hold. Refused with `DeadlinePassed` once the trip is awaiting the signature past `deadline` |
 | `resolve_dispute(trip, pay, reason_hash)` | admin | BR-05 override, BR-07 |
 | `force_check_in(trip, wp, payload_hash, reason_hash)` / `log_override(...)` | admin + platform | BR-07 |
 | `cancel_trip(trip, reason_hash)` / `close_trip(trip)` | admin | T10, BR-10 |

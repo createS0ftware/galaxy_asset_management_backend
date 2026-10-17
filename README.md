@@ -14,7 +14,7 @@ artifacts/               Built contract Wasm
 ## Contract
 
 ```bash
-cargo test                 # 14 tests: every business rule, auth, failure paths, hash-chain vectors
+cargo test                 # 22 tests: every business rule, auth, failure paths, hash-chain vectors
 stellar contract build     # → target/wasm32v1-none/release/asset_trail.wasm
 ```
 
@@ -44,7 +44,7 @@ npm run test:e2e           # full TR-2041 journey on testnet through the HTTP AP
 |---|---|
 | Public | `GET /network` · `POST /auth/staff/login` · `POST /auth/driver/otp` · `POST /auth/driver/verify` |
 | Portal (staff JWT) | `POST/GET /assets` · `GET /assets/:id` · `POST /assets/:id/activate` · `POST /assets/:id/proof-links` · `POST/GET /drivers` · `POST /trips` · `GET /trips` (board + needs-attention) · `GET /trips/:id` · `POST /trips/:id/{overrides,force-checkin,resolve,cancel,close}` · `POST /advances/:id/{approve,decline}` · `GET /payments/summary` · `GET /payments/reconciliation.csv` |
-| Driver (driver JWT) | `GET /driver/me` · `POST /driver/wallet/{prepare,submit}` · `GET /driver/wallet` · `GET /driver/trips[/:id]` · `POST /driver/trips/:id/{accept,checkins,checkins/batch,location,advances,advances/claim}` · `POST /driver/cashouts/{quote,:id/prepare,:id/submit}` |
+| Driver (driver JWT) | `GET /driver/me` · `POST /driver/wallet/{prepare,submit}` · `GET /driver/wallet` · `GET /driver/trips[/:id]` · `POST /driver/trips/:id/{accept,checkins,checkins/batch,location,advances,advances/claim,final-pay}` · `POST /driver/cashouts/{quote,:id/prepare,:id/submit}` |
 | Tracking (link token) | `GET /track/:token` · `POST /track/:token/{otp,sign,report}` |
 | Verify (proof link) | `GET /verify/:token[?rpc=<own node>]` · `GET /verify/:token/events/:id/payload` · `GET /verify/:token/proof-pack` |
 
@@ -57,6 +57,15 @@ npm run test:e2e           # full TR-2041 journey on testnet through the HTTP AP
 3. The fee account submits; driver pay and location hash land in one transaction.
 
 Auth entries use nonces, not sequence numbers, so offline check-ins never block each other.
+
+### Final pay
+
+The final leg stays in escrow until the receiver signs. Each trip gets a `deliveryDeadline` at
+dispatch (`POST /trips`, default: delivery window end + `DELIVERY_SIGN_HOURS`). If nobody has
+signed or reported a problem by then, the driver claims it with `POST /driver/trips/:id/final-pay`
+(`{ payload, authEntry }`, an auth entry for `claim_final_pay(trip, sha256(payload))`). Only the
+driver signs that call, so the platform can't hold the money back, and once the deadline has
+passed a late dispute can't block the claim.
 
 ## Verifier
 

@@ -25,6 +25,7 @@ const REQUIRED_SIGNERS: Record<number, string[]> = {
   [Kind.OVERRIDE]: ['admin'],
   [Kind.FORCED_CHECKIN]: ['admin', 'platform'],
   [Kind.CANCEL]: ['admin'],
+  [Kind.RELEASE]: ['driver'],
 };
 
 // ------------------------------------------------------------ proof links
@@ -124,6 +125,7 @@ export async function verifyAsset(ctx: Ctx, assetId: string, opts: { rpcUrl?: st
     }
     if (rec.kind === Kind.FORCED_CHECKIN || rec.kind === Kind.OVERRIDE) flags.push({ seq: rec.seq, type: 'override', detail: kindName(rec.kind) });
     if (rec.kind === Kind.DISPUTE) flags.push({ seq: rec.seq, type: 'dispute', detail: 'Problem reported' });
+    if (rec.kind === Kind.RELEASE) flags.push({ seq: rec.seq, type: 'release', detail: 'Final pay claimed by the driver after the delivery deadline; receiver did not sign' });
     if (result !== 'Match') flags.push({ seq: rec.seq, type: result.toLowerCase(), detail: `Payload ${result.toLowerCase()}` });
     return {
       seq: rec.seq,

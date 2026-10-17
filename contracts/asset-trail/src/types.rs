@@ -19,6 +19,9 @@ pub mod kind {
     // Payout-only kinds (not part of the custody chain).
     pub const ADVANCE: u32 = 13;
     pub const REFUND: u32 = 14;
+    /// Custody kind (part of the hash chain): final leg released to the driver after the
+    /// delivery deadline, with no receiver signature or dispute.
+    pub const RELEASE: u32 = 15;
 }
 
 pub const MAX_ID_LEN: u32 = 64;
@@ -47,6 +50,8 @@ pub enum Error {
     NotReceiverOrPlatform = 18,
     PayOverRemaining = 19,
     InvalidDeadline = 20,
+    DeadlineNotPassed = 21,
+    DeadlinePassed = 22,
 }
 
 #[contracttype]
@@ -120,6 +125,9 @@ pub struct Trip {
     pub legs: Vec<i128>,
     pub advance_limit: i128,
     pub plan_hash: BytesN<32>,
+    /// Ledger timestamp (unix seconds) set at dispatch: after it, with no receiver signature or
+    /// dispute, the driver can claim the final leg (`claim_final_pay`).
+    pub deadline: u64,
     pub funded: i128,
     /// Everything sent to the driver: leg pay, claimed advances, final pay.
     pub released: i128,

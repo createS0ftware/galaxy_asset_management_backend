@@ -8,6 +8,7 @@ import { claimAdvance, requestAdvance } from '../../services/advances.js';
 import { prepareCashout, quoteCashout, submitCashout } from '../../services/cashout.js';
 import { reportLocation, submitCheckIn, submitQueue } from '../../services/checkins.js';
 import { getDriver, prepareWallet, submitWallet, usdcBalance } from '../../services/drivers.js';
+import { claimFinalPay, finalPayTemplate } from '../../services/release.js';
 import { eventFor } from '../../services/signer.js';
 import { acceptTrip, getTripRow, tripView } from '../../services/trips.js';
 import { requireRole, who } from '../auth.js';
@@ -30,6 +31,21 @@ const checkIn = z.object({
       acc_m: z.number(),
       t_device: z.string(),
       photos: z.array(z.string()),
+      salt: z.string(),
+    })
+    .passthrough(),
+  authEntry: z.string().min(1),
+});
+
+/** POST /trips/:id/final-pay: release payload + driver auth entry for claim_final_pay(trip, sha256(payload)). */
+export const finalPayBody = z.object({
+  payload: z
+    .object({
+      v: z.literal(1),
+      event: z.literal('release'),
+      trip: z.string(),
+      asset: z.string(),
+      t_device: z.string(),
       salt: z.string(),
     })
     .passthrough(),
@@ -113,6 +129,8 @@ export const driverRoutes =
                 maxOfflineHours: ctx.config.OFFLINE_MAX_HOURS,
               }
             : null,
+        /** While the receiver hasn't signed: the final leg the driver can claim after the deadline (§4.6). */
+        finalPay: t.status === 'awaiting_signature' ? await finalPayTemplate(ctx, t) : null,
       };
     });
     app.post<P<'id'>>('/trips/:id/accept', (req) => acceptTrip(ctx, req.params.id, who(req)));
@@ -137,6 +155,10 @@ export const driverRoutes =
       const { authEntry } = parse(z.object({ authEntry: z.string() }), req.body);
       const row = await claimAdvance(ctx, who(req), req.params.id, authEntry);
       return { ...row, amount: fromStroops(BigInt(row.amount)) };
+    });
+    app.post<P<'id'>>('/trips/:id/final-pay', async (req) => {
+      const b = parse(finalPayBody, req.body);
+      return claimFinalPay(ctx, who(req), req.params.id, b);
     });
 
     // ------------------------------------------------------------ cash-out

@@ -1,0 +1,1 @@
+ALTER TABLE "trips" ADD COLUMN "delivery_deadline" timestamp with time zone;

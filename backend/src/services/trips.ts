@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
 import type { Ctx } from '../context.js';
 import { schema } from '../db/client.js';
 import { randomToken } from '../lib/crypto.js';
-import { conflict, forbidden, notFound, rejected } from '../lib/errors.js';
+import { badRequest, conflict, forbidden, notFound, rejected } from '../lib/errors.js';
 import { fromStroops } from '../lib/money.js';
 import { Kind, makePayload } from '../lib/payload.js';
 import type { ChainTrip } from '../stellar/scval.js';
@@ -34,6 +34,11 @@ export interface CreateTripInput {
   vehicle?: string;
   advanceLimit: bigint;
   waypoints: WaypointInput[];
+  /**
+   * ISO datetime. After it, with no receiver signature or dispute, the driver can claim the final
+   * leg. Default: the delivery window's end + DELIVERY_SIGN_HOURS.
+   */
+  deliveryDeadline?: string;
 }
 
 /** Default geofence radius by waypoint type (journey 5.1 stage 2). */
@@ -85,6 +90,22 @@ function validateWaypoints(wps: WaypointInput[]) {
 }
 
 /**
+ * The delivery deadline set at dispatch (§4.6), in whole seconds because that is what the contract
+ * stores. Must fall after the delivery waypoint's window and in the future.
+ */
+export function deliveryDeadline(wps: WaypointInput[], requested: string | undefined, signHours: number, now = new Date()): Date {
+  const windowEnd = new Date(wps[wps.length - 1]!.windowEnd);
+  const wanted = requested ? new Date(requested) : new Date(windowEnd.getTime() + signHours * 3_600_000);
+  if (Number.isNaN(wanted.getTime())) throw badRequest('BAD_DEADLINE', 'deliveryDeadline must be an ISO datetime');
+  const deadline = new Date(Math.floor(wanted.getTime() / 1000) * 1000);
+  if (deadline <= windowEnd) {
+    throw badRequest('BAD_DEADLINE', `Delivery deadline must be after the delivery window ends (${windowEnd.toISOString()})`);
+  }
+  if (deadline <= now) throw badRequest('BAD_DEADLINE', `Delivery deadline ${deadline.toISOString()} is not in the future`);
+  return deadline;
+}
+
+/**
  * Journey 5.1 stage 3 / T3: assign driver and receiver, then fund escrow from the treasury.
  * BR-01 (asset active) and BR-02 (escrow ≥ legs + advance limit) are checked here and again
  * by the contract.
@@ -93,6 +114,7 @@ export async function createTrip(ctx: Ctx, input: CreateTripInput, staffId: numb
   const id = input.id ?? `TR-${Date.now().toString(36).toUpperCase()}`;
   if (await ctx.db.query.trips.findFirst({ where: eq(schema.trips.id, id) })) throw conflict('TRIP_EXISTS');
   validateWaypoints(input.waypoints);
+  const deadline = deliveryDeadline(input.waypoints, input.deliveryDeadline, ctx.config.DELIVERY_SIGN_HOURS);
 
   const asset = await ctx.db.query.assets.findFirst({ where: eq(schema.assets.id, input.assetId) });
   if (!asset) throw notFound('Asset');
@@ -147,6 +169,7 @@ export async function createTrip(ctx: Ctx, input: CreateTripInput, staffId: numb
       window_end: w.windowEnd.toISOString(),
       leg_pay: fromStroops(w.legPay),
     })),
+    delivery_deadline: deadline.toISOString(),
   });
 
   await ctx.db.insert(schema.trips).values({
@@ -159,6 +182,7 @@ export async function createTrip(ctx: Ctx, input: CreateTripInput, staffId: numb
     advanceLimit: Number(input.advanceLimit),
     escrow: Number(escrow),
     trackingToken: randomToken(18),
+    deliveryDeadline: deadline,
     createdBy: staffId,
   });
   await ctx.db.insert(schema.waypoints).values(waypoints);
@@ -177,6 +201,7 @@ export async function createTrip(ctx: Ctx, input: CreateTripInput, staffId: numb
           legs,
           advanceLimit: input.advanceLimit,
           planHash: hash,
+          deadline: Math.floor(deadline.getTime() / 1000),
         });
         const tx = await ctx.trail.call('create_trip', args, { kind: 'record', signers: [ctx.admin, ctx.treasury] });
         const chain = await ctx.trail.trip(id);
@@ -238,6 +263,8 @@ export async function tripView(ctx: Ctx, tripId: string) {
       funded_badge: trip.status !== 'cancelled' && trip.status !== 'closed',
     },
     nextWp: trip.nextWp,
+    /** After this, with no receiver signature or dispute, the driver can claim the final leg. */
+    deliveryDeadline: trip.deliveryDeadline?.toISOString() ?? null,
     waypoints: waypoints.map((w) => {
       const v = verified(w.idx);
       return {

@@ -32,6 +32,11 @@ const schema = z.object({
   FEE_ALERT_XLM: z.coerce.number().nonnegative().default(50),
   /** [N days] — proof link expiry. */
   PROOF_LINK_DAYS: z.coerce.number().positive().default(30),
+  /**
+   * [N hours] — default delivery deadline: how long after the delivery window closes the receiver
+   * has to sign or report a problem before the driver can claim the final leg (§4.6).
+   */
+  DELIVERY_SIGN_HOURS: z.coerce.number().positive().default(24),
   INDEXER_INTERVAL_MS: z.coerce.number().nonnegative().default(15_000),
 });
 
