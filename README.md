@@ -8,8 +8,21 @@ from escrow, in the same transaction. Design decisions are in [PLAN.md](PLAN.md)
 contracts/asset-trail/   Soroban contract (Rust): escrow, custody records, per-asset hash chain
 backend/                 TypeScript API (Fastify, Drizzle/Postgres, @stellar/stellar-sdk 17)
 verifier/                Standalone open-source verifier for proof packs
-artifacts/               Built contract Wasm
+artifacts/               Contract Wasm (copy of the attested v0.1.0 release build)
 ```
+
+## Testnet deployment
+
+| | |
+|---|---|
+| Contract | [`CBA7QTM2NJC6CHZO23CYWTW3O6BOQ7CE3QCPVDFKZE7OCLPDWCRPQ4RO`](https://stellar.expert/explorer/testnet/contract/CBA7QTM2NJC6CHZO23CYWTW3O6BOQ7CE3QCPVDFKZE7OCLPDWCRPQ4RO) |
+| Wasm | `asset-trail_v0.1.0.wasm`, sha256 `8094c9320e5d7f311ee55ae13a9daa2e82af040abc846cf77f297b112ea24f27` |
+| Release | [v0.1.0_asset-trail_cli28.1.0](https://github.com/createS0ftware/galaxy_asset_management_backend/releases/tag/v0.1.0_asset-trail_cli28.1.0), built and attested by [`.github/workflows/release-contract.yml`](.github/workflows/release-contract.yml) from commit `0f0eae8` |
+| Source verification | Stellar Expert: **verified** |
+
+Release flow: push a `v*` tag → CI builds and attests the Wasm → deploy *that* file (local builds
+differ by toolchain) → `npx tsx --env-file=.env.testnet scripts/verify-deployment.ts <release.wasm>`
+checks the on-chain Wasm hash and contract config.
 
 ## Contract
 
