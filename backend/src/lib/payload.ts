@@ -42,6 +42,17 @@ export interface WaypointPayload extends Payload {
   photos: string[];
 }
 
+/**
+ * The final-pay release payload built on the driver's phone once the delivery deadline has passed
+ * with no receiver signature or dispute (§4.6). Its hash is the `claim_hash` of claim_final_pay.
+ */
+export interface ReleasePayload extends Payload {
+  event: 'release';
+  trip: string;
+  asset: string;
+  t_device: string;
+}
+
 /** Custody-chain step, mirroring the contract: sha256(head ‖ kind_be32 ‖ hash ‖ aux|zeros). */
 export function chainStep(head: Buffer, kind: number, hash: Buffer, aux?: Buffer | null): Buffer {
   const k = Buffer.alloc(4);
@@ -67,6 +78,8 @@ export const Kind = {
   CANCEL: 12,
   ADVANCE: 13,
   REFUND: 14,
+  /** Final leg released to the driver after the delivery deadline (custody kind). */
+  RELEASE: 15,
 } as const;
 export type KindName = keyof typeof Kind;
 export const kindName = (k: number) => (Object.keys(Kind) as KindName[]).find((n) => Kind[n] === k) ?? `UNKNOWN_${k}`;

@@ -48,14 +48,18 @@ export async function trackingView(ctx: Ctx, token: string) {
     live: v.live,
     finalPay: final.legPay,
     signingReleasesPay: true,
+    /** Sign or report a problem before this; after it the driver can claim the final pay. */
+    signBy: v.deliveryDeadline,
     onChain: { contractId: ctx.trail.contractId, assetKey: asset.id, receiverAddress: receiver.publicKey },
   };
 }
 
 export async function sendSignOtp(ctx: Ctx, token: string) {
   const { trip, receiver } = await byToken(ctx, token);
-  await sendOtp(ctx, receiver.phone, `receiver:${trip.id}`, (code) => `Your code to sign for ${trip.id}: ${code}`);
-  return { sent: true, to: receiver.phone.replace(/.(?=.{3})/g, '•') };
+  const code = await sendOtp(ctx, receiver.phone, `receiver:${trip.id}`, (c) => `Your code to sign for ${trip.id}: ${c}`);
+  const sent = { sent: true, to: receiver.phone.replace(/.(?=.{3})/g, '•') };
+  // Demo set-ups without an SMS provider (SHOW_OTP_IN_RESPONSE) get the code back.
+  return ctx.config.SHOW_OTP_IN_RESPONSE ? { ...sent, devCode: code } : sent;
 }
 
 /**
@@ -104,6 +108,10 @@ export async function reportProblem(ctx: Ctx, token: string, input: { code: stri
   const { trip, receiver, asset } = await byToken(ctx, token);
   return tripLocks.run(trip.id, async () => {
     if (!['funded', 'accepted', 'in_transit', 'awaiting_signature'].includes(trip.status)) throw conflict('CANNOT_REPORT', `Trip is ${trip.status}`);
+    // Mirrors the contract: a late dispute must not block the driver's claim on the final leg.
+    if (trip.status === 'awaiting_signature' && trip.deliveryDeadline && Date.now() > trip.deliveryDeadline.getTime()) {
+      throw rejected('DEADLINE_PASSED', `Problems had to be reported by ${trip.deliveryDeadline.toISOString()}`);
+    }
     if (!(await checkOtp(ctx, receiver.phone, `receiver:${trip.id}`, input.code))) throw unauthorized('Invalid or expired code');
     if (!input.photos.length) throw rejected('PHOTO_REQUIRED', 'Add at least one photo');
     const payload = makePayload('dispute', {

@@ -26,7 +26,7 @@ const pack = JSON.parse(readFileSync(file, 'utf8'));
 const rpcUrl = args.includes('--rpc') ? args[args.indexOf('--rpc') + 1] : pack.rpcUrl;
 const server = new rpc.Server(rpcUrl, { allowHttp: rpcUrl.startsWith('http://') });
 
-const KIND = { 1: 'REGISTER', 2: 'ACTIVATE', 3: 'DISPATCH', 4: 'PICKUP', 5: 'CHECKIN', 6: 'ARRIVAL', 7: 'DELIVERY', 8: 'DISPUTE', 9: 'RESOLVE', 10: 'OVERRIDE', 11: 'FORCED_CHECKIN', 12: 'CANCEL' };
+const KIND = { 1: 'REGISTER', 2: 'ACTIVATE', 3: 'DISPATCH', 4: 'PICKUP', 5: 'CHECKIN', 6: 'ARRIVAL', 7: 'DELIVERY', 8: 'DISPUTE', 9: 'RESOLVE', 10: 'OVERRIDE', 11: 'FORCED_CHECKIN', 12: 'CANCEL', 15: 'RELEASE' };
 const sha256 = (b) => createHash('sha256').update(b).digest();
 const hex = (b) => Buffer.from(b).toString('hex');
 const str = (s) => nativeToScVal(s, { type: 'string' });

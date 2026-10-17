@@ -24,6 +24,12 @@ const schema = z.object({
   SEED_ADMIN_EMAIL: z.string().email().optional(),
   SEED_ADMIN_PASSWORD: z.string().min(8).optional(),
 
+  /** Demo only: return driver sign-in codes in the OTP response, for set-ups without an SMS provider. Never in production. */
+  SHOW_OTP_IN_RESPONSE: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
+
   /** [N hours] — how long an offline-signed check-in stays submittable. */
   OFFLINE_MAX_HOURS: z.coerce.number().positive().default(12),
   /** [threshold] — device-vs-receipt gap that marks a check-in as offline / flags it. */
@@ -32,6 +38,11 @@ const schema = z.object({
   FEE_ALERT_XLM: z.coerce.number().nonnegative().default(50),
   /** [N days] — proof link expiry. */
   PROOF_LINK_DAYS: z.coerce.number().positive().default(30),
+  /**
+   * [N hours] — default delivery deadline: how long after the delivery window closes the receiver
+   * has to sign or report a problem before the driver can claim the final leg (§4.6).
+   */
+  DELIVERY_SIGN_HOURS: z.coerce.number().positive().default(24),
   INDEXER_INTERVAL_MS: z.coerce.number().nonnegative().default(15_000),
 });
 

@@ -85,6 +85,11 @@ export const trips = pgTable('trips', {
   advanced: amount('advanced').notNull().default(0),
   nextWp: integer('next_wp').notNull().default(0),
   trackingToken: text('tracking_token').notNull().unique(),
+  /**
+   * Set at dispatch and passed to create_trip (whole seconds). After it, with no receiver signature
+   * or dispute, the driver can claim the final leg (claim_final_pay).
+   */
+  deliveryDeadline: timestamp('delivery_deadline', { withTimezone: true }),
   acceptedAt: timestamp('accepted_at', { withTimezone: true }),
   arrivedAt: timestamp('arrived_at', { withTimezone: true }),
   deliveredAt: timestamp('delivered_at', { withTimezone: true }),

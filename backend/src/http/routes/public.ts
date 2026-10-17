@@ -23,6 +23,9 @@ export const publicRoutes =
       contractId: ctx.trail.contractId,
       payAsset: ctx.config.PAY_ASSET,
       latestLedger: await ctx.sub.latestLedger(),
+      /** What phones date offline authorizations with (same as the driver check-in template). */
+      ledgerSeconds: 5,
+      maxOfflineHours: ctx.config.OFFLINE_MAX_HOURS,
     }));
 
     // --------------------------------------------------------------- auth
@@ -35,8 +38,10 @@ export const publicRoutes =
     app.post('/auth/driver/otp', async (req) => {
       const b = parse(z.object({ phone }), req.body);
       const d = await ctx.db.query.drivers.findFirst({ where: eq(schema.drivers.phone, b.phone) });
-      if (d) await sendOtp(ctx, b.phone, 'driver-login', (code) => `Your sign-in code: ${code}`);
-      return { sent: true }; // same answer either way: don't reveal who's registered
+      const code = d ? await sendOtp(ctx, b.phone, 'driver-login', (c) => `Your sign-in code: ${c}`) : undefined;
+      // Same answer either way, so it doesn't reveal who's registered. Demo set-ups without an SMS
+      // provider can opt in to getting the code back, so the phone can show it.
+      return ctx.config.SHOW_OTP_IN_RESPONSE && code ? { sent: true, devCode: code } : { sent: true };
     });
     app.post('/auth/driver/verify', async (req) => {
       const b = parse(z.object({ phone, code: z.string().length(6) }), req.body);

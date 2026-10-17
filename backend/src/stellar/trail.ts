@@ -49,6 +49,8 @@ export class TrailContract {
       legs: bigint[];
       advanceLimit: bigint;
       planHash: Buffer;
+      /** Unix seconds: after this, with no receiver signature or dispute, the driver can claim the final leg. */
+      deadline: number;
     }) => [
       str(t.id),
       str(t.asset),
@@ -58,9 +60,11 @@ export class TrailContract {
       vec(t.legs.map((l) => i128(l))),
       i128(t.advanceLimit),
       bytes32(t.planHash),
+      u64(t.deadline),
     ],
     check_in: (trip: string, wp: number, hash: Buffer) => [str(trip), u32(wp), bytes32(hash)],
     confirm_delivery: (trip: string, receiptHash: Buffer) => [str(trip), bytes32(receiptHash)],
+    claim_final_pay: (trip: string, claimHash: Buffer) => [str(trip), bytes32(claimHash)],
     grant_advance: (trip: string, amount: bigint, expiresAt: number) => [str(trip), i128(amount), u64(expiresAt)],
     claim_advance: (trip: string) => [str(trip)],
     report_problem: (trip: string, by: string, evidenceHash: Buffer) => [str(trip), addr(by), bytes32(evidenceHash)],

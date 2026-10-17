@@ -4,10 +4,12 @@ import { z } from 'zod';
 import type { Ctx } from '../../context.js';
 import { schema } from '../../db/client.js';
 import { fromStroops } from '../../lib/money.js';
+import { Kind } from '../../lib/payload.js';
 import { claimAdvance, requestAdvance } from '../../services/advances.js';
 import { prepareCashout, quoteCashout, submitCashout } from '../../services/cashout.js';
 import { reportLocation, submitCheckIn, submitQueue } from '../../services/checkins.js';
 import { getDriver, prepareWallet, submitWallet, usdcBalance } from '../../services/drivers.js';
+import { claimFinalPay, finalPayTemplate } from '../../services/release.js';
 import { eventFor } from '../../services/signer.js';
 import { acceptTrip, getTripRow, tripView } from '../../services/trips.js';
 import { requireRole, who } from '../auth.js';
@@ -15,6 +17,9 @@ import { money, parse } from '../validate.js';
 import { forbidden } from '../../lib/errors.js';
 
 type P<T extends string> = { Params: Record<T, string> };
+
+/** Custody kinds whose amount went to the driver: leg pay, forced check-ins and the final leg. */
+const DRIVER_PAID_KINDS: number[] = [Kind.PICKUP, Kind.CHECKIN, Kind.FORCED_CHECKIN, Kind.DELIVERY, Kind.RESOLVE, Kind.RELEASE];
 
 const checkIn = z.object({
   payload: z
@@ -30,6 +35,21 @@ const checkIn = z.object({
       acc_m: z.number(),
       t_device: z.string(),
       photos: z.array(z.string()),
+      salt: z.string(),
+    })
+    .passthrough(),
+  authEntry: z.string().min(1),
+});
+
+/** POST /trips/:id/final-pay: release payload + driver auth entry for claim_final_pay(trip, sha256(payload)). */
+export const finalPayBody = z.object({
+  payload: z
+    .object({
+      v: z.literal(1),
+      event: z.literal('release'),
+      trip: z.string(),
+      asset: z.string(),
+      t_device: z.string(),
       salt: z.string(),
     })
     .passthrough(),
@@ -80,10 +100,29 @@ export const driverRoutes =
         networkFees: 'paid by the platform',
         advanceReady: advances.filter((a) => a.status === 'granted').map((a) => ({ id: a.id, trip: a.tripId, amount: fromStroops(BigInt(a.amount)), claimBy: a.expiresAt })),
         activity: [
-          ...activity.filter((e) => e.amount > 0).map((e) => ({ type: 'leg', trip: e.tripId, wp: e.wp, amount: fromStroops(BigInt(e.amount)), txHash: e.txHash, at: e.ledgerTime })),
+          // Only events that paid the driver: the dispatch event carries the escrow the funder put in.
+          ...activity
+            .filter((e) => e.amount > 0 && DRIVER_PAID_KINDS.includes(e.kind))
+            .map((e) => ({ type: 'leg', kind: e.kind, trip: e.tripId, wp: e.wp, amount: fromStroops(BigInt(e.amount)), txHash: e.txHash, at: e.ledgerTime })),
           ...advances.filter((a) => a.status === 'claimed').map((a) => ({ type: 'advance', trip: a.tripId, amount: fromStroops(BigInt(a.amount)), txHash: a.claimTx, at: a.createdAt })),
-          ...cashouts.map((c) => ({ type: 'cashout', status: c.status, amount: fromStroops(BigInt(-c.amount)), txHash: c.txHash, at: c.createdAt })),
+          ...cashouts.map((c) => ({ type: 'cashout', id: c.id, status: c.status, amount: fromStroops(BigInt(-c.amount)), txHash: c.txHash, at: c.createdAt })),
         ],
+        cashouts: cashouts.map((c) => {
+          const q = c.quote as { fee: string; buyAmount: string; buyAsset: string; rate: string; arrival?: string };
+          return {
+            id: c.id,
+            amount: fromStroops(BigInt(c.amount)),
+            fee: fromStroops(BigInt(q.fee)),
+            buyAmount: q.buyAmount,
+            buyCurrency: q.buyAsset.split(':')[1],
+            rate: q.rate,
+            arrival: q.arrival,
+            status: c.status,
+            txHash: c.txHash,
+            error: c.error,
+            createdAt: c.createdAt,
+          };
+        }),
       };
     });
 
@@ -113,6 +152,8 @@ export const driverRoutes =
                 maxOfflineHours: ctx.config.OFFLINE_MAX_HOURS,
               }
             : null,
+        /** While the receiver hasn't signed: the final leg the driver can claim after the deadline (§4.6). */
+        finalPay: t.status === 'awaiting_signature' ? await finalPayTemplate(ctx, t) : null,
       };
     });
     app.post<P<'id'>>('/trips/:id/accept', (req) => acceptTrip(ctx, req.params.id, who(req)));
@@ -137,6 +178,10 @@ export const driverRoutes =
       const { authEntry } = parse(z.object({ authEntry: z.string() }), req.body);
       const row = await claimAdvance(ctx, who(req), req.params.id, authEntry);
       return { ...row, amount: fromStroops(BigInt(row.amount)) };
+    });
+    app.post<P<'id'>>('/trips/:id/final-pay', async (req) => {
+      const b = parse(finalPayBody, req.body);
+      return claimFinalPay(ctx, who(req), req.params.id, b);
     });
 
     // ------------------------------------------------------------ cash-out

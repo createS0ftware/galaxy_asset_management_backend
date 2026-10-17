@@ -50,6 +50,8 @@ export interface ChainTrip {
   legs: bigint[];
   advanceLimit: bigint;
   planHash: Buffer;
+  /** Unix seconds: after this, with no receiver signature or dispute, the driver can claim the final leg. */
+  deadline: number;
   funded: bigint;
   released: bigint;
   advanced: bigint;
@@ -102,6 +104,7 @@ export function decodeTrip(v: xdr.ScVal): ChainTrip {
     legs: (r.legs as unknown[]).map((x) => BigInt(x as bigint)),
     advanceLimit: BigInt(r.advance_limit),
     planHash: buf(r.plan_hash),
+    deadline: Number(r.deadline),
     funded: BigInt(r.funded),
     released: BigInt(r.released),
     advanced: BigInt(r.advanced),
@@ -134,4 +137,6 @@ export const CONTRACT_ERRORS: Record<number, string> = {
   18: 'NotReceiverOrPlatform',
   19: 'PayOverRemaining',
   20: 'InvalidDeadline',
+  21: 'DeadlineNotPassed',
+  22: 'DeadlinePassed',
 };

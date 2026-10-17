@@ -6,7 +6,8 @@ import { otpCode, sha256Hex } from '../lib/crypto.js';
 const TTL_MS = 10 * 60_000;
 const MAX_ATTEMPTS = 5;
 
-export async function sendOtp(ctx: Ctx, phone: string, purpose: string, text: (code: string) => string) {
+/** Sends a fresh code and returns it (only demo set-ups echo it back; see SHOW_OTP_IN_RESPONSE). */
+export async function sendOtp(ctx: Ctx, phone: string, purpose: string, text: (code: string) => string): Promise<string> {
   const code = otpCode();
   await ctx.db.insert(schema.otpCodes).values({
     subject: phone,
@@ -15,6 +16,7 @@ export async function sendOtp(ctx: Ctx, phone: string, purpose: string, text: (c
     expiresAt: new Date(Date.now() + TTL_MS),
   });
   await ctx.sms.send(phone, text(code));
+  return code;
 }
 
 /** Consume a valid OTP. Returns false on wrong, expired or exhausted codes. */

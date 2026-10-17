@@ -3,7 +3,7 @@
 extern crate std;
 
 use super::*;
-use soroban_sdk::testutils::{Address as _, AuthorizedFunction, Ledger};
+use soroban_sdk::testutils::{Address as _, AuthorizedFunction, Ledger, MockAuth, MockAuthInvoke};
 use soroban_sdk::{token::StellarAssetClient, token::TokenClient, vec, IntoVal, Symbol};
 
 struct Setup<'a> {
@@ -52,6 +52,13 @@ fn legs(env: &Env) -> Vec<i128> {
     vec![env, 0, 18_0000000, 22_0000000, 15_0000000, 25_0000000]
 }
 
+/// Delivery deadline of `funded_trip` (the ledger starts at 1_000_000).
+const DEADLINE: u64 = 1_500_000;
+
+fn set_time(t: &Setup, timestamp: u64) {
+    t.env.ledger().with_mut(|l| l.timestamp = timestamp);
+}
+
 fn active_asset(t: &Setup, id: &str) {
     t.client.register_asset(&s(&t.env, id), &h(&t.env, 1));
     t.client.activate_asset(&s(&t.env, id), &h(&t.env, 2));
@@ -67,7 +74,18 @@ fn funded_trip(t: &Setup, trip: &str, asset: &str) -> Trip {
         &legs(&t.env),
         &40_0000000,
         &h(&t.env, 3),
+        &DEADLINE,
     )
+}
+
+/// A funded trip checked in at every waypoint: awaiting the receiver's signature.
+fn arrived_trip(t: &Setup, trip: &str, asset: &str) -> String {
+    funded_trip(t, trip, asset);
+    let id = s(&t.env, trip);
+    for wp in 0..5 {
+        t.client.check_in(&id, &wp, &h(&t.env, 20 + wp as u8));
+    }
+    id
 }
 
 #[test]
@@ -191,12 +209,12 @@ fn asset_must_be_active_and_free() {
     let t = setup();
     let e = &t.env;
     t.client.register_asset(&s(e, "A1"), &h(e, 1));
-    let r = t.client.try_create_trip(&s(e, "T1"), &s(e, "A1"), &t.driver, &t.receiver, &t.treasury, &legs(e), &0, &h(e, 3));
+    let r = t.client.try_create_trip(&s(e, "T1"), &s(e, "A1"), &t.driver, &t.receiver, &t.treasury, &legs(e), &0, &h(e, 3), &DEADLINE);
     assert_eq!(r, Err(Ok(ce(Error::AssetInactive))));
     t.client.activate_asset(&s(e, "A1"), &h(e, 2));
     assert_eq!(t.client.try_activate_asset(&s(e, "A1"), &h(e, 2)), Err(Ok(ce(Error::AssetAlreadyActive))));
     funded_trip(&t, "T1", "A1");
-    let r = t.client.try_create_trip(&s(e, "T2"), &s(e, "A1"), &t.driver, &t.receiver, &t.treasury, &legs(e), &0, &h(e, 3));
+    let r = t.client.try_create_trip(&s(e, "T2"), &s(e, "A1"), &t.driver, &t.receiver, &t.treasury, &legs(e), &0, &h(e, 3), &DEADLINE);
     assert_eq!(r, Err(Ok(ce(Error::AssetBusy))));
     assert_eq!(t.client.try_register_asset(&s(e, "A1"), &h(e, 1)), Err(Ok(ce(Error::AssetExists))));
     assert_eq!(t.client.try_register_asset(&s(e, ""), &h(e, 1)), Err(Ok(ce(Error::InvalidId))));
@@ -208,16 +226,33 @@ fn trip_validation() {
     let e = &t.env;
     active_asset(&t, "A1");
     let one = vec![e, 5i128];
-    let r = t.client.try_create_trip(&s(e, "T1"), &s(e, "A1"), &t.driver, &t.receiver, &t.treasury, &one, &0, &h(e, 3));
+    let r = t.client.try_create_trip(&s(e, "T1"), &s(e, "A1"), &t.driver, &t.receiver, &t.treasury, &one, &0, &h(e, 3), &DEADLINE);
     assert_eq!(r, Err(Ok(ce(Error::InvalidLegs))));
     let neg = vec![e, 0i128, -1];
-    let r = t.client.try_create_trip(&s(e, "T1"), &s(e, "A1"), &t.driver, &t.receiver, &t.treasury, &neg, &0, &h(e, 3));
+    let r = t.client.try_create_trip(&s(e, "T1"), &s(e, "A1"), &t.driver, &t.receiver, &t.treasury, &neg, &0, &h(e, 3), &DEADLINE);
     assert_eq!(r, Err(Ok(ce(Error::InvalidAmount))));
     funded_trip(&t, "T1", "A1");
     t.client.register_asset(&s(e, "A2"), &h(e, 1));
     t.client.activate_asset(&s(e, "A2"), &h(e, 2));
-    let r = t.client.try_create_trip(&s(e, "T1"), &s(e, "A2"), &t.driver, &t.receiver, &t.treasury, &legs(e), &0, &h(e, 3));
+    let r = t.client.try_create_trip(&s(e, "T1"), &s(e, "A2"), &t.driver, &t.receiver, &t.treasury, &legs(e), &0, &h(e, 3), &DEADLINE);
     assert_eq!(r, Err(Ok(ce(Error::TripExists))));
+}
+
+#[test]
+fn create_trip_rejects_past_deadline() {
+    let t = setup();
+    let e = &t.env;
+    active_asset(&t, "A1");
+    let create = |deadline: u64| {
+        t.client.try_create_trip(&s(e, "T1"), &s(e, "A1"), &t.driver, &t.receiver, &t.treasury, &legs(e), &40_0000000, &h(e, 3), &deadline)
+    };
+    assert_eq!(create(999_999), Err(Ok(ce(Error::InvalidDeadline))));
+    // The current ledger time is not in the future either.
+    assert_eq!(create(1_000_000), Err(Ok(ce(Error::InvalidDeadline))));
+    assert_eq!(t.token.balance(&t.client.address), 0);
+    let trip = create(1_000_001).unwrap().unwrap();
+    assert_eq!(trip.deadline, 1_000_001);
+    assert_eq!(t.client.trip(&s(e, "T1")).deadline, 1_000_001);
 }
 
 #[test]
@@ -291,6 +326,175 @@ fn dispute_resume_continues_trip() {
     assert_eq!(tr.status, TripStatus::AwaitingSignature);
     t.client.confirm_delivery(&id, &h(e, 9));
     assert_eq!(t.token.balance(&t.driver), 80_0000000);
+}
+
+// ------------------------------------------------- final pay after the deadline (§4.6)
+
+#[test]
+fn release_after_deadline_pays_final_leg_minus_advance() {
+    let t = setup();
+    let e = &t.env;
+    active_asset(&t, "A1");
+    funded_trip(&t, "T1", "A1");
+    let id = s(e, "T1");
+    t.client.check_in(&id, &0, &h(e, 10));
+    t.client.check_in(&id, &1, &h(e, 11));
+    t.client.grant_advance(&id, &20_0000000, &2_000_000);
+    t.client.claim_advance(&id);
+    for wp in 2..5 {
+        t.client.check_in(&id, &wp, &h(e, 10 + wp as u8));
+    }
+    assert_eq!(t.token.balance(&t.driver), 75_0000000);
+
+    set_time(&t, DEADLINE + 1);
+    let tr = t.client.claim_final_pay(&id, &h(e, 50));
+    // Only the driver authorized it, for exactly claim_final_pay(trip, claim_hash).
+    let auths = e.auths();
+    assert_eq!(auths.len(), 1);
+    let (who, inv) = &auths[0];
+    assert_eq!(who, &t.driver);
+    assert_eq!(
+        inv.function,
+        AuthorizedFunction::Contract((t.client.address.clone(), Symbol::new(e, "claim_final_pay"), (id.clone(), h(e, 50)).into_val(e)))
+    );
+    assert!(inv.sub_invocations.is_empty());
+
+    assert_eq!(tr.status, TripStatus::Delivered);
+    // Driver gets exactly the leg total: 18 + 20 (advance) + 22 + 15 + (25 - 20).
+    assert_eq!(t.token.balance(&t.driver), 80_0000000);
+    assert_eq!((tr.released, tr.advanced), (80_0000000, 20_0000000));
+    let last = tr.records.get(tr.records.len() - 1).unwrap();
+    assert_eq!((last.kind, last.wp, last.hash, last.aux, last.amount), (kind::RELEASE, 4, h(e, 50), None, 5_0000000));
+
+    // RELEASE is a link of the custody chain, and it frees the asset.
+    let asset = t.client.asset(&s(e, "A1"));
+    assert_eq!((asset.seq, asset.current_trip), (9, None));
+    let mut head = BytesN::from_array(e, &[0u8; 32]);
+    head = chain_step(e, &head, kind::REGISTER, &h(e, 1), &None);
+    head = chain_step(e, &head, kind::ACTIVATE, &h(e, 2), &None);
+    for r in tr.records.iter() {
+        head = chain_step(e, &head, r.kind, &r.hash, &r.aux);
+    }
+    assert_eq!(head, asset.head);
+}
+
+#[test]
+fn release_before_deadline_fails() {
+    let t = setup();
+    let e = &t.env;
+    active_asset(&t, "A1");
+    let id = arrived_trip(&t, "T1", "A1");
+    assert_eq!(t.client.try_claim_final_pay(&id, &h(e, 50)), Err(Ok(ce(Error::DeadlineNotPassed))));
+    // The deadline itself still belongs to the receiver.
+    set_time(&t, DEADLINE);
+    assert_eq!(t.client.try_claim_final_pay(&id, &h(e, 50)), Err(Ok(ce(Error::DeadlineNotPassed))));
+    set_time(&t, DEADLINE + 1);
+    assert_eq!(t.client.claim_final_pay(&id, &h(e, 50)).status, TripStatus::Delivered);
+}
+
+#[test]
+fn release_needs_arrival_and_no_signature() {
+    let t = setup();
+    let e = &t.env;
+    active_asset(&t, "A1");
+    funded_trip(&t, "T1", "A1");
+    let id = s(e, "T1");
+    set_time(&t, DEADLINE + 1);
+    assert_eq!(t.client.try_claim_final_pay(&id, &h(e, 50)), Err(Ok(ce(Error::WrongStatus))));
+    t.client.check_in(&id, &0, &h(e, 1));
+    t.client.check_in(&id, &1, &h(e, 1));
+    assert_eq!(t.client.try_claim_final_pay(&id, &h(e, 50)), Err(Ok(ce(Error::WrongStatus))));
+    for wp in 2..5 {
+        t.client.check_in(&id, &wp, &h(e, 1));
+    }
+    // The receiver signs (late, but before any claim): the final leg is paid exactly once.
+    t.client.confirm_delivery(&id, &h(e, 9));
+    assert_eq!(t.client.try_claim_final_pay(&id, &h(e, 50)), Err(Ok(ce(Error::WrongStatus))));
+    assert_eq!(t.token.balance(&t.driver), 80_0000000);
+}
+
+#[test]
+fn release_requires_driver_auth() {
+    let t = setup();
+    let e = &t.env;
+    active_asset(&t, "A1");
+    let id = arrived_trip(&t, "T1", "A1");
+    set_time(&t, DEADLINE + 1);
+    let invoke = MockAuthInvoke {
+        contract: &t.client.address,
+        fn_name: "claim_final_pay",
+        args: (id.clone(), h(e, 50)).into_val(e),
+        sub_invokes: &[],
+    };
+    let platform = MockAuth { address: &t.platform, invoke: &invoke };
+    let admin = MockAuth { address: &t.admin, invoke: &invoke };
+    let driver = MockAuth { address: &t.driver, invoke: &invoke };
+    // Platform and admin signatures can't stand in for the driver's.
+    let r = t.client.mock_auths(&[platform.clone(), admin.clone()]).try_claim_final_pay(&id, &h(e, 50));
+    assert!(r.is_err());
+    assert_eq!(t.client.trip(&id).status, TripStatus::AwaitingSignature);
+    assert_eq!(t.token.balance(&t.driver), 55_0000000);
+    // The same call with the driver's signature added goes through.
+    let tr = t.client.mock_auths(&[platform, admin, driver]).claim_final_pay(&id, &h(e, 50));
+    assert_eq!(tr.status, TripStatus::Delivered);
+    assert_eq!(t.token.balance(&t.driver), 80_0000000);
+}
+
+#[test]
+fn dispute_after_deadline_fails() {
+    let t = setup();
+    let e = &t.env;
+    active_asset(&t, "A1");
+    funded_trip(&t, "T1", "A1");
+    let id = s(e, "T1");
+    set_time(&t, DEADLINE + 1);
+    // Before arrival the deadline doesn't apply.
+    t.client.check_in(&id, &0, &h(e, 1));
+    assert_eq!(t.client.report_problem(&id, &t.platform, &h(e, 7)).status, TripStatus::Disputed);
+    assert_eq!(t.client.resolve_dispute(&id, &Resolution::Resume, &h(e, 8)).status, TripStatus::InTransit);
+    for wp in 1..5 {
+        t.client.check_in(&id, &wp, &h(e, 1));
+    }
+    // Awaiting signature past the deadline: a late dispute can't block the release.
+    assert_eq!(t.client.try_report_problem(&id, &t.receiver, &h(e, 7)), Err(Ok(ce(Error::DeadlinePassed))));
+    assert_eq!(t.client.try_report_problem(&id, &t.platform, &h(e, 7)), Err(Ok(ce(Error::DeadlinePassed))));
+    assert_eq!(t.client.claim_final_pay(&id, &h(e, 50)).status, TripStatus::Delivered);
+    assert_eq!(t.token.balance(&t.driver), 80_0000000);
+}
+
+#[test]
+fn dispute_before_deadline_blocks_release() {
+    let t = setup();
+    let e = &t.env;
+    active_asset(&t, "A1");
+    let id = arrived_trip(&t, "T1", "A1");
+    // Last moment to report a problem.
+    set_time(&t, DEADLINE);
+    assert_eq!(t.client.report_problem(&id, &t.receiver, &h(e, 7)).status, TripStatus::Disputed);
+    set_time(&t, DEADLINE + 1);
+    assert_eq!(t.client.try_claim_final_pay(&id, &h(e, 50)), Err(Ok(ce(Error::WrongStatus))));
+    // Ops decides the final pay instead.
+    let tr = t.client.resolve_dispute(&id, &Resolution::Release(10_0000000), &h(e, 8));
+    assert_eq!(tr.status, TripStatus::Delivered);
+    assert_eq!(t.token.balance(&t.driver), 65_0000000);
+}
+
+#[test]
+fn close_after_release_refunds_rest() {
+    let t = setup();
+    let e = &t.env;
+    active_asset(&t, "A1");
+    let id = arrived_trip(&t, "T1", "A1");
+    set_time(&t, DEADLINE + 1);
+    t.client.claim_final_pay(&id, &h(e, 50));
+    let closed = t.client.close_trip(&id);
+    assert_eq!(closed.status, TripStatus::Closed);
+    assert_eq!(closed.released, closed.funded);
+    // 120 escrowed, 80 paid as legs; the unused advance limit goes back to the funder.
+    assert_eq!(t.token.balance(&t.driver), 80_0000000);
+    assert_eq!(t.token.balance(&t.client.address), 0);
+    assert_eq!(t.token.balance(&t.treasury), 1_000_0000000 - 80_0000000);
+    assert_eq!(t.client.try_claim_final_pay(&id, &h(e, 50)), Err(Ok(ce(Error::WrongStatus))));
 }
 
 #[test]

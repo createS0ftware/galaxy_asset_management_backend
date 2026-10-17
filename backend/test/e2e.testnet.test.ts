@@ -6,7 +6,16 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { Keypair } from '@stellar/stellar-sdk';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildCheckInPayload, offlineValidUntil, signCheckIn, signClaimAdvance, signTransactionXdr, type CheckInTemplate } from '../src/client/driver.js';
+import {
+  buildCheckInPayload,
+  buildReleasePayload,
+  offlineValidUntil,
+  signCheckIn,
+  signClaimAdvance,
+  signClaimFinalPay,
+  signTransactionXdr,
+  type CheckInTemplate,
+} from '../src/client/driver.js';
 import { loadConfig } from '../src/config.js';
 import { createContext, type Ctx } from '../src/context.js';
 import { schema } from '../src/db/client.js';
@@ -191,6 +200,13 @@ run('testnet journey: TR-2041 Tema → Kumasi', () => {
     expect(arr.status, JSON.stringify(arr.body)).toBe(201);
     expect(arr.body.awaitingSignature).toBe(true);
     expect(sms().last(receiverPhone)!.text).toMatch(/inspect and sign/);
+
+    // §4.6: the final leg is claimable by the driver only after the deadline set at dispatch.
+    const t = await call('GET', `/v1/driver/trips/${tripId}`, undefined, driverToken);
+    expect(t.body.finalPay).toMatchObject({ claimable: false, amount: '5.00', deadline: t.body.deliveryDeadline });
+    const early = await signClaimFinalPay(driverKey, tripId, t.body.finalPay, buildReleasePayload(tripId, assetId), t.body.finalPay.latestLedger + 100);
+    const refused = await call('POST', `/v1/driver/trips/${tripId}/final-pay`, early, driverToken);
+    expect([refused.status, refused.body.error]).toEqual([422, 'DEADLINE_NOT_PASSED']);
   });
 
   it('receiver tracks and signs with OTP; final pay minus advance is released (T8, BR-05)', async () => {

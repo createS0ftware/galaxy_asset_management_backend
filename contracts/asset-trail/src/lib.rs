@@ -76,7 +76,8 @@ impl AssetTrail {
     // ----------------------------------------------------------------- trips
 
     /// T3. Create a trip and pull `sum(legs) + advance_limit` from the funder into
-    /// escrow (BR-02 holds by construction).
+    /// escrow (BR-02 holds by construction). `deadline` (unix seconds) is when the driver may
+    /// claim the final leg if the receiver has neither signed nor disputed (`claim_final_pay`).
     #[allow(clippy::too_many_arguments)]
     pub fn create_trip(
         env: Env,
@@ -88,6 +89,7 @@ impl AssetTrail {
         legs: Vec<i128>,
         advance_limit: i128,
         plan_hash: BytesN<32>,
+        deadline: u64,
     ) -> Trip {
         let cfg = config(&env);
         cfg.admin.require_auth();
@@ -108,6 +110,9 @@ impl AssetTrail {
         }
         if advance_limit < 0 {
             panic_with_error!(&env, Error::InvalidAmount);
+        }
+        if deadline <= env.ledger().timestamp() {
+            panic_with_error!(&env, Error::InvalidDeadline);
         }
         let mut asset = load_asset(&env, &asset_id);
         if !asset.active {
@@ -131,6 +136,7 @@ impl AssetTrail {
             legs,
             advance_limit,
             plan_hash: plan_hash.clone(),
+            deadline,
             funded,
             released: 0,
             advanced: 0,
@@ -156,7 +162,7 @@ impl AssetTrail {
 
     /// T4 / T5. Record the waypoint hash and pay the leg in one call. Waypoint 0 is the
     /// pickup. At the delivery waypoint this records arrival only; the final leg is paid
-    /// by `confirm_delivery`.
+    /// by `confirm_delivery`, or by `claim_final_pay` once the deadline has passed.
     pub fn check_in(env: Env, trip_id: String, wp: u32, payload_hash: BytesN<32>) -> Trip {
         let cfg = config(&env);
         let mut trip = load_trip(&env, &trip_id);
@@ -181,6 +187,27 @@ impl AssetTrail {
         let pay = trip.legs.get_unchecked(last) - trip.advanced;
         pay_driver(&env, &cfg, &mut trip, pay, kind::DELIVERY);
         finish(&env, &mut trip, TripStatus::Delivered, kind::DELIVERY, last, &receipt_hash, &None, pay);
+        save_trip(&env, &trip);
+        trip
+    }
+
+    /// Spec §4.6. Nobody signed or disputed by the deadline set at dispatch: the driver claims
+    /// the final leg minus advances, anchoring the hash of their release payload. Driver auth
+    /// only, so the platform cannot withhold it.
+    pub fn claim_final_pay(env: Env, trip_id: String, claim_hash: BytesN<32>) -> Trip {
+        let cfg = config(&env);
+        let mut trip = load_trip(&env, &trip_id);
+        trip.driver.require_auth();
+        if trip.status != TripStatus::AwaitingSignature {
+            panic_with_error!(&env, Error::WrongStatus);
+        }
+        if env.ledger().timestamp() <= trip.deadline {
+            panic_with_error!(&env, Error::DeadlineNotPassed);
+        }
+        let last = trip.legs.len() - 1;
+        let pay = trip.legs.get_unchecked(last) - trip.advanced;
+        pay_driver(&env, &cfg, &mut trip, pay, kind::RELEASE);
+        finish(&env, &mut trip, TripStatus::Delivered, kind::RELEASE, last, &claim_hash, &None, pay);
         save_trip(&env, &trip);
         trip
     }
@@ -237,7 +264,9 @@ impl AssetTrail {
     // ------------------------------------------------- disputes and overrides
 
     /// Receiver (or the platform on their behalf) reports damage or shortage.
-    /// Holds check-ins and final pay until ops resolves it.
+    /// Holds check-ins and final pay until ops resolves it. Once the trip is awaiting the
+    /// receiver's signature, this must happen by the deadline: a late dispute can't block
+    /// `claim_final_pay`.
     pub fn report_problem(env: Env, trip_id: String, by: Address, evidence_hash: BytesN<32>) -> Trip {
         let cfg = config(&env);
         let mut trip = load_trip(&env, &trip_id);
@@ -246,7 +275,12 @@ impl AssetTrail {
         }
         by.require_auth();
         match trip.status {
-            TripStatus::Funded | TripStatus::InTransit | TripStatus::AwaitingSignature => {}
+            TripStatus::Funded | TripStatus::InTransit => {}
+            TripStatus::AwaitingSignature => {
+                if env.ledger().timestamp() > trip.deadline {
+                    panic_with_error!(&env, Error::DeadlinePassed);
+                }
+            }
             _ => panic_with_error!(&env, Error::WrongStatus),
         }
         trip.status = TripStatus::Disputed;

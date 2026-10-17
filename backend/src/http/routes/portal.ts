@@ -81,6 +81,8 @@ export const portalRoutes =
               }),
             )
             .min(2),
+          /** Default: delivery windowEnd + DELIVERY_SIGN_HOURS. */
+          deliveryDeadline: z.string().datetime().optional(),
         }),
         req.body,
       );
